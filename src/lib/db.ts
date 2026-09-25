@@ -1,20 +1,34 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 
 let db: Database.Database | null = null;
+let tried = false;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    init(db);
+/**
+ * Returns the SQLite handle, or null when no writable location exists
+ * (e.g. read-only serverless filesystems). Callers treat null as
+ * "no cache" and fall back to live sources.
+ */
+export function getDb(): Database.Database | null {
+  if (db || tried) return db;
+  tried = true;
+  for (const p of [DB_PATH, path.join(os.tmpdir(), "numtrace-app.db")]) {
+    try {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      db = new Database(p);
+      db.pragma("journal_mode = WAL");
+      db.pragma("foreign_keys = ON");
+      init(db);
+      return db;
+    } catch {
+      db = null;
+    }
   }
-  return db;
+  return null;
 }
 
 function init(d: Database.Database) {

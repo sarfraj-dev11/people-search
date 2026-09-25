@@ -82,6 +82,7 @@ function realRowToPerson(r: RealPersonRow): PersonResult {
 
 function queryRealPeopleLocal(name: string, where: string): PersonResult[] {
   const db = getDb();
+  if (!db) return [];
   const tokens = name.trim().split(/\s+/).filter(Boolean);
   const conds = tokens.map(() => `UPPER(name) LIKE ?`);
   const args: unknown[] = tokens.map((t) => `%${t.toUpperCase()}%`);
@@ -104,7 +105,28 @@ async function searchRealPeople(name: string, where: string): Promise<PersonResu
 
   // miss: hit all live public-record APIs in parallel, ingest, re-query
   const hits = await fetchByName(name, parseWhere(where));
-  if (hits.length) ingestRealPeople(hits);
+  if (!hits.length) return [];
+
+  // no writable DB (e.g. serverless) — map hits directly instead of caching
+  if (!getDb()) {
+    return hits.map((h, i) => ({
+      id: i + 1,
+      firstName: h.firstName ?? h.name,
+      lastName: h.lastName ?? "",
+      age: null,
+      city: h.city ?? "",
+      state: h.state ?? "",
+      zip: h.zip ?? "",
+      phone: null,
+      relatives: [],
+      premium: false,
+      source: h.source,
+      sourceLabel: SOURCE_LABELS[h.source] ?? h.source,
+      role: h.role,
+    }));
+  }
+
+  ingestRealPeople(hits);
   rows = queryRealPeopleLocal(name, where);
   return rows;
 }
@@ -149,6 +171,7 @@ export interface RealPersonDetail {
 
 export function getRealPerson(id: number): RealPersonDetail | null {
   const db = getDb();
+  if (!db) return null;
   const row = db.prepare(`SELECT * FROM real_people WHERE id = ?`).get(id) as
     | (RealPersonRow & { fetched_at: string })
     | undefined;
@@ -282,6 +305,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
 
 export function lastNameDirectory(letter: string): { name: string; count: number }[] {
   const db = getDb();
+  if (!db) return [];
   return db
     .prepare(
       `SELECT last_name name, COUNT(*) count FROM real_people

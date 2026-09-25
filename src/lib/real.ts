@@ -556,7 +556,7 @@ interface CnamResult {
 export async function lookupPhoneReal(digits: string): Promise<RealPhoneHit | null> {
   if (!/^\d{10}$/.test(digits)) return null;
   const db = getDb();
-  const cached = db.prepare(`SELECT * FROM real_phones WHERE digits = ?`).get(digits) as PhoneRow | undefined;
+  const cached = db?.prepare(`SELECT * FROM real_phones WHERE digits = ?`).get(digits) as PhoneRow | undefined;
   if (cached) return phoneRowToHit(cached);
 
   // primary: freecnamlookingup — free CNAM + carrier + portability
@@ -642,7 +642,7 @@ export async function lookupPhoneReal(digits: string): Promise<RealPhoneHit | nu
 
   if (!hit) return null;
 
-  db.prepare(
+  db?.prepare(
     `INSERT OR REPLACE INTO real_phones (digits, valid, line_type, carrier, cnam, city, state, spam_score, risk_level, detail)
      VALUES (?,?,?,?,?,?,?,?,?,?)`
   ).run(hit.digits, hit.valid ? 1 : 0, hit.lineType, hit.carrier, hit.cnam, hit.city, hit.state, hit.spamScore, hit.riskLevel, JSON.stringify(hit.detail));
@@ -672,6 +672,7 @@ export async function fetchByAddress(street: string, where: Where): Promise<Real
 
 export function ingestRealPeople(hits: RealPersonHit[]): number[] {
   const db = getDb();
+  if (!db) return [];
   const ins = db.prepare(
     `INSERT OR IGNORE INTO real_people (source, name, first_name, last_name, address, city, state, zip, role, external_id, detail)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`
@@ -691,6 +692,7 @@ export function ingestRealPeople(hits: RealPersonHit[]): number[] {
 
 export function ingestRealProperty(hit: RealPropertyHit): number {
   const db = getDb();
+  if (!db) return -1;
   const key = `${hit.address}|${hit.city}|${hit.state}|${hit.zip}`;
   db.prepare(
     `INSERT OR IGNORE INTO real_properties (source, address, city, state, zip, detail)
