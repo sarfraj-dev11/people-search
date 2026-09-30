@@ -58,6 +58,120 @@ interface IpqsRaw {
 
 const T = 8_000;
 
+/**
+ * PeopleDataLabs person enrichment - free tier (100 credits/mo).
+ * Phone -> real person profile: name, emails, social URLs, address, job.
+ * This is actual aggregated-record data (same category brokers sell).
+ */
+export interface PdlPerson {
+  name: string | null;
+  emails: string[];
+  phones: string[];
+  address: string | null;
+  location: string | null;
+  jobTitle: string | null;
+  company: string | null;
+  profiles: { platform: string; url: string }[];
+}
+
+export async function pdlEnrich(digits: string): Promise<PdlPerson | null> {
+  const key = process.env.PDL_API_KEY;
+  if (!key || !/^\d{10}$/.test(digits)) return null;
+  try {
+    const url = `https://api.peopledatalabs.com/v5/person/enrich?phone=${encodeURIComponent(
+      `+1${digits}`
+    )}&min_likelihood=2`;
+    const res = await fetch(url, {
+      headers: { "X-Api-Key": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      status?: number;
+      data?: {
+        full_name?: string;
+        emails?: { address?: string }[];
+        phone_numbers?: string[];
+        street_addresses?: { street_address?: string; locality?: string; region?: string; postal_code?: string }[];
+        location_names?: string[];
+        job_title?: string;
+        job_company_name?: string;
+        linkedin_url?: string;
+        twitter_url?: string;
+        facebook_url?: string;
+        github_url?: string;
+      };
+    };
+    const d = j.data;
+    if (j.status !== 200 || !d) return null;
+
+    const addr = d.street_addresses?.[0];
+    const profiles = [
+      d.linkedin_url && { platform: "LinkedIn", url: d.linkedin_url },
+      d.twitter_url && { platform: "X (Twitter)", url: d.twitter_url },
+      d.facebook_url && { platform: "Facebook", url: d.facebook_url },
+      d.github_url && { platform: "GitHub", url: d.github_url },
+    ].filter((p): p is { platform: string; url: string } => !!p);
+
+    return {
+      name: d.full_name ?? null,
+      emails: (d.emails ?? []).map((e) => e.address).filter((e): e is string => !!e).slice(0, 6),
+      phones: (d.phone_numbers ?? []).slice(0, 6),
+      address: addr
+        ? [addr.street_address, addr.locality, addr.region, addr.postal_code].filter(Boolean).join(", ")
+        : null,
+      location: d.location_names?.[0] ?? null,
+      jobTitle: d.job_title ?? null,
+      company: d.job_company_name ?? null,
+      profiles,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Numverify validation - free tier, email-only signup.
+ * Extra validation/carrier/location source alongside CNAM.
+ */
+export interface NumverifyResult {
+  valid: boolean;
+  carrier: string | null;
+  lineType: string | null;
+  location: string | null;
+  countryCode: string | null;
+}
+
+export async function numverifyLookup(digits: string): Promise<NumverifyResult | null> {
+  const key = process.env.NUMVERIFY_KEY;
+  if (!key || !/^\d{10}$/.test(digits)) return null;
+  try {
+    const res = await fetch(
+      `http://apilayer.net/api/validate?access_key=${key}&number=1${digits}&country_code=US&format=1`,
+      { signal: AbortSignal.timeout(T) }
+    );
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      valid?: boolean;
+      carrier?: string;
+      line_type?: string;
+      location?: string;
+      country_code?: string;
+      success?: boolean;
+    };
+    if (j.success === false || j.valid === undefined) return null;
+    return {
+      valid: j.valid,
+      carrier: j.carrier ?? null,
+      lineType: j.line_type ?? null,
+      location: j.location ?? null,
+      countryCode: j.country_code ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function ipqsLookup(digits: string): Promise<IpqsPhoneResult | null> {
   const key = process.env.IPQS_API_KEY;
   if (!key || !/^\d{10}$/.test(digits)) return null;

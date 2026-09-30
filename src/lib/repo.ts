@@ -8,7 +8,7 @@ import {
   githubUser, githubSearch, redditUser, gravatarProfile, phoneWebMentions,
   type SocialProfile, type GravatarProfile, type WebMentions,
 } from "./social";
-import { ipqsLookup } from "./phoneintel";
+import { ipqsLookup, pdlEnrich, type PdlPerson } from "./phoneintel";
 
 // ---------- shared types ----------
 
@@ -252,6 +252,8 @@ export interface PhoneResult {
   extraEmails: string[];
   zip: string | null;
   timezone: string | null;
+  /** matched person profile from PeopleDataLabs (aggregated public-record data) */
+  person: PdlPerson | null;
   source: string;
   sourceLabel: string;
   fetchedAt: string;
@@ -293,9 +295,10 @@ function normalizeCnamName(raw: string): string {
 export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const digits = digitsOnly(input).replace(/^1(?=\d{10}$)/, "");
   if (digits.length !== 10) return null;
-  const [hit, ipqs, web] = await Promise.all([
+  const [hit, ipqs, pdl, web] = await Promise.all([
     lookupPhoneReal(digits),
     ipqsLookup(digits).catch(() => null),
+    pdlEnrich(digits).catch(() => null),
     phoneWebMentions(digits).catch(() => null),
   ]);
   if (!hit) return null;
@@ -311,7 +314,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const valid = ipqs?.valid ?? hit.valid;
   const confidence: PhoneResult["confidence"] = !valid
     ? "low"
-    : cnam || ipqs?.active === true
+    : cnam || ipqs?.active === true || pdl
       ? "high"
       : "medium";
 
@@ -319,6 +322,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
 
   const sources = ["freecnamlookingup", "numbers.online"];
   if (ipqs) sources.push("ipqualityscore");
+  if (pdl) sources.push("peopledatalabs");
 
   return {
     phone: `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`,
@@ -341,6 +345,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
     extraEmails: ipqs?.emails ?? [],
     zip: ipqs?.zip ?? null,
     timezone: ipqs?.timezone ?? null,
+    person: pdl,
     source: "multi",
     sourceLabel: sources.join(" + "),
     fetchedAt: hit.fetchedAt,

@@ -224,6 +224,73 @@ export default async function PhonePage({
           </div>
         )}
 
+        {result?.person && (
+          <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">
+              Matched profile
+            </p>
+            {result.person.name && (
+              <p className="mt-3 text-xl font-semibold text-frost">{result.person.name}</p>
+            )}
+            {(result.person.jobTitle || result.person.company) && (
+              <p className="mt-1 text-xs text-mist">
+                {[result.person.jobTitle, result.person.company].filter(Boolean).join(" · ")}
+              </p>
+            )}
+            {result.person.address && (
+              <p className="mt-1 text-xs text-mist">{result.person.address}</p>
+            )}
+            {result.person.emails.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Emails</p>
+                <div className="space-y-1.5">
+                  {result.person.emails.map((e) => (
+                    <p key={e} className="mono-num text-sm text-accent break-all">{e}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+            {result.person.phones.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Other numbers</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.person.phones.map((p) => (
+                    <a
+                      key={p}
+                      href={`/phone?phone=${encodeURIComponent(p)}`}
+                      className="mono-num rounded-full border border-line px-3 py-1.5 text-xs text-frost hover:border-accent hover:text-accent transition-colors"
+                    >
+                      {p}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+            {result.person.profiles.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Profiles</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.person.profiles.map((l) => (
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border border-line px-3 py-1.5 text-xs text-frost hover:border-accent hover:text-accent transition-colors"
+                    >
+                      {l.platform} →
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="mt-4 text-[10px] text-mist/60 leading-relaxed">
+              Aggregated public-record profile (PeopleDataLabs) — a confident match, but
+              records can be stale or merged across household members.
+            </p>
+          </div>
+        )}
+
         {result?.web && (result.web.emails.length > 0 || result.web.phones.length > 0 || result.web.links.length > 0 || result.web.pages.length > 0) && (
           <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">
