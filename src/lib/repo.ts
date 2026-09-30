@@ -5,8 +5,8 @@ import {
   ingestRealPeople, ingestRealProperty, type RealPropertyHit,
 } from "./real";
 import {
-  githubUser, githubSearch, redditUser, gravatarProfile,
-  type SocialProfile, type GravatarProfile,
+  githubUser, githubSearch, redditUser, gravatarProfile, phoneWebMentions,
+  type SocialProfile, type GravatarProfile, type WebMentions,
 } from "./social";
 
 // ---------- shared types ----------
@@ -234,6 +234,8 @@ export interface PhoneResult {
   source: string;
   sourceLabel: string;
   fetchedAt: string;
+  /** emails/profiles/pages found on public web pages mentioning this number */
+  web: WebMentions | null;
 }
 
 function capWords(s: string): string {
@@ -270,7 +272,10 @@ function normalizeCnamName(raw: string): string {
 export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const digits = digitsOnly(input).replace(/^1(?=\d{10}$)/, "");
   if (digits.length !== 10) return null;
-  const hit = await lookupPhoneReal(digits);
+  const [hit, web] = await Promise.all([
+    lookupPhoneReal(digits),
+    phoneWebMentions(digits).catch(() => null),
+  ]);
   if (!hit) return null;
 
   const rawCnam = hit.cnam?.trim() ?? "";
@@ -302,6 +307,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
     source: "cnamlookup",
     sourceLabel: "freecnamlookingup + numbers.online",
     fetchedAt: hit.fetchedAt,
+    web,
   };
 }
 

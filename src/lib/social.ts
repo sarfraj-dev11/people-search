@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 /**
- * Free, legal public-profile lookups — no scraping.
+ * Free, legal public-profile lookups --- no scraping.
  * GitHub + Reddit public APIs and Gravatar's public profile endpoint.
  */
 
@@ -40,7 +40,7 @@ export async function githubUser(username: string): Promise<SocialProfile | null
     avatar: (j.avatar_url as string) ?? null,
     bio: (j.bio as string) ?? null,
     location: (j.location as string) ?? null,
-    stats: `${j.followers ?? 0} followers · ${j.public_repos ?? 0} repos`,
+    stats: `${j.followers ?? 0} followers -- ${j.public_repos ?? 0} repos`,
   };
 }
 
@@ -92,7 +92,7 @@ export async function gravatarProfile(email: string): Promise<GravatarProfile | 
   };
 }
 
-/** GitHub user search — works best with exact emails/usernames; unauth rate limits apply */
+/** GitHub user search --- works best with exact emails/usernames; unauth rate limits apply */
 export async function githubSearch(query: string): Promise<SocialProfile[]> {
   const j = await getJson(`https://api.github.com/search/users?q=${encodeURIComponent(query)}`);
   const items = (j?.items as Record<string, unknown>[] | undefined) ?? [];
@@ -106,4 +106,188 @@ export async function githubSearch(query: string): Promise<SocialProfile[]> {
     location: null,
     stats: null,
   }));
+}
+
+// ---------- public-web mentions (OSINT-lite) ----------
+
+export interface WebMentions {
+  /** emails appearing on public pages that mention this query */
+  emails: string[];
+  /** social profile links found on those pages */
+  links: { platform: string; url: string }[];
+  /** pages mentioning the query */
+  pages: { title: string; url: string; snippet: string }[];
+}
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const SOCIAL_HOSTS: [RegExp, string][] = [
+  [/instagram\.com\/[\w.]+/i, "Instagram"],
+  [/twitter\.com\/[\w]+|x\.com\/[\w]+/i, "X (Twitter)"],
+  [/facebook\.com\/[\w.]+/i, "Facebook"],
+  [/linkedin\.com\/in\/[\w-]+/i, "LinkedIn"],
+  [/tiktok\.com\/@[\w.]+/i, "TikTok"],
+  [/youtube\.com\/@[\w.-]+|youtube\.com\/channel\/[\w-]+/i, "YouTube"],
+  [/github\.com\/[\w-]+/i, "GitHub"],
+  [/reddit\.com\/user\/[\w-]+/i, "Reddit"],
+];
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+async function getText(url: string, init?: RequestInit): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": BROWSER_UA, Accept: "text/html" },
+      signal: AbortSignal.timeout(T),
+      ...init,
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+function decodeEntities(s: string) {
+  return s
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'");
+}
+
+/** Junk/non-personal emails that appear in page chrome, assets and tracking code. */
+const JUNK_EMAIL =
+  /(?:example\.|sentry|wixpress|duckduckgo|@2x\.|@3x\.|\.png$|\.jpe?g$|\.gif$|\.svg$|\.webp$|\.css$|\.js$|noreply|no-reply|donotreply|@sentry|w3\.org|schema\.org|godaddy\.com\/|@font)/i;
+
+function emailsIn(text: string): string[] {
+  const found = decodeEntities(text).match(EMAIL_RE) ?? [];
+  return [...new Set(found.map((e) => e.toLowerCase()).filter((e) => !JUNK_EMAIL.test(e)))];
+}
+
+interface SearchHit {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** Brave Search API - reliable JSON results when BRAVE_API_KEY is set (free tier). */
+async function searchBrave(query: string): Promise<SearchHit[]> {
+  const key = process.env.BRAVE_API_KEY;
+  if (!key) return [];
+  try {
+    const res = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10`,
+      {
+        headers: {
+          "X-Subscription-Token": key,
+          Accept: "application/json",
+          "User-Agent": BROWSER_UA,
+        },
+        signal: AbortSignal.timeout(T),
+      }
+    );
+    if (!res.ok) return [];
+    const j = (await res.json()) as {
+      web?: { results?: { url?: string; title?: string; description?: string }[] };
+    };
+    return (j.web?.results ?? [])
+      .filter((r) => r.url && /^https?:/.test(r.url))
+      .map((r) => ({ title: r.title ?? "", url: r.url!, snippet: r.description ?? "" }));
+  } catch {
+    return [];
+  }
+}
+
+/** DuckDuckGo lite (POST - GET is captcha-walled). Best-effort, keyless. */
+async function searchLite(query: string): Promise<SearchHit[]> {
+  let html: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    html = await getText("https://lite.duckduckgo.com/lite/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `q=${encodeURIComponent(query)}`,
+    });
+    if (!html) return [];
+    if (!html.includes("anomaly-modal")) break;
+    html = null;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (!html) return [];
+
+  const hits: SearchHit[] = [];
+  const snippets = [...html.matchAll(/<td class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/gi)].map(
+    (m) => decodeEntities(m[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim()
+  );
+  // anchors: <a rel="nofollow" href="URL" class='result-link'>TITLE</a>
+  // attribute order/quotes vary, so match every <a> tag then filter by class.
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = anchorRe.exec(html)) && hits.length < 8) {
+    const attrs = m[1];
+    if (!/class=['"][^'"]*result-link/.test(attrs)) continue;
+    const rawHref = decodeEntities(attrs.match(/href=["']([^"']+)["']/)?.[1] ?? "");
+    const uddg = rawHref.match(/uddg=([^&]+)/);
+    const url = uddg ? decodeURIComponent(uddg[1]) : rawHref;
+    if (!/^https?:/.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    hits.push({
+      title: decodeEntities(m[2].replace(/<[^>]+>/g, "")).trim(),
+      url,
+      snippet: snippets[hits.length] ?? "",
+    });
+  }
+  return hits;
+}
+
+/** Search the public web for pages mentioning a query; extract emails + profile links. */
+export async function webMentions(query: string): Promise<WebMentions> {
+  const out: WebMentions = { emails: [], links: [], pages: [] };
+  const hits = (await searchBrave(`"${query}"`)).concat(await searchLite(`"${query}"`));
+
+  const seen = new Set<string>();
+  for (const h of hits) {
+    if (seen.has(h.url) || out.pages.length >= 10) continue;
+    seen.add(h.url);
+    out.pages.push(h);
+    for (const [re, platform] of SOCIAL_HOSTS) {
+      if (re.test(h.url)) out.links.push({ platform, url: h.url.split("?")[0] });
+    }
+    out.emails.push(...emailsIn(h.snippet));
+  }
+  out.emails = [...new Set(out.emails)];
+
+  // also scan the first few result pages themselves for a visible email
+  if (out.emails.length === 0 && out.pages.length > 0) {
+    const pageHtml = await Promise.all(out.pages.slice(0, 3).map((p) => getText(p.url)));
+    for (const h of pageHtml) {
+      if (!h) continue;
+      for (const e of emailsIn(h)) {
+        if (!out.emails.includes(e)) out.emails.push(e);
+        if (out.emails.length >= 6) break;
+      }
+      if (out.emails.length >= 6) break;
+    }
+  }
+
+  // de-dupe links
+  const seenLinks = new Set<string>();
+  out.links = out.links.filter((l) => !seenLinks.has(l.url) && seenLinks.add(l.url));
+  return out;
+}
+
+/** Phone-specific web search - queries common written formats of the number. */
+export async function phoneWebMentions(digits: string): Promise<WebMentions> {
+  const fmt = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  const merged: WebMentions = { emails: [], links: [], pages: [] };
+  for (const q of [digits, fmt]) {
+    const r = await webMentions(q);
+    merged.emails.push(...r.emails);
+    merged.links.push(...r.links);
+    merged.pages.push(...r.pages);
+    if (merged.pages.length >= 8) break;
+  }
+  merged.emails = [...new Set(merged.emails)];
+  merged.pages = merged.pages.filter((p, i, a) => a.findIndex((x) => x.url === p.url) === i).slice(0, 10);
+  merged.links = merged.links.filter((l, i, a) => a.findIndex((x) => x.url === l.url) === i);
+  return merged;
 }

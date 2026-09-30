@@ -143,6 +143,75 @@ export default async function PhonePage({
             </div>
           </div>
         )}
+
+        {result?.web && (result.web.emails.length > 0 || result.web.links.length > 0 || result.web.pages.length > 0) && (
+          <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">
+              Found on the public web
+            </p>
+
+            {result.web.emails.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs text-mist mb-2">Emails on pages mentioning this number</p>
+                <div className="space-y-1.5">
+                  {result.web.emails.slice(0, 5).map((e) => (
+                    <p key={e} className="mono-num text-sm text-accent break-all">{e}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.web.links.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Possible profiles</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.web.links.map((l) => (
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border border-line px-3 py-1.5 text-xs text-frost hover:border-accent hover:text-accent transition-colors"
+                    >
+                      {l.platform} →
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.web.pages.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Pages mentioning this number</p>
+                <div className="space-y-2">
+                  {result.web.pages.slice(0, 6).map((p) => (
+                    <a
+                      key={p.url}
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block group"
+                    >
+                      <span className="block text-xs text-frost/80 group-hover:text-accent truncate transition-colors">
+                        {p.title || p.url}
+                      </span>
+                      {p.snippet && (
+                        <span className="block text-[11px] text-mist/70 line-clamp-1 mt-0.5">
+                          {p.snippet}
+                        </span>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="mt-4 text-[10px] text-mist/60 leading-relaxed">
+              Public web mentions only — appearing on the same page does not verify the
+              email or profile belongs to the number&apos;s owner.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
