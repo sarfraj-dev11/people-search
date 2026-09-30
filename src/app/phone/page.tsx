@@ -242,6 +242,94 @@ export default async function PhonePage({
           </div>
         )}
 
+        {result?.report && (
+          <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">
+              Public records report
+            </p>
+
+            {result.report.names.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xl font-semibold text-frost">{result.report.names[0]}</p>
+                {result.report.names.length > 1 && (
+                  <p className="mt-1 text-xs text-mist">
+                    Also known as: {result.report.names.slice(1, 5).join(", ")}
+                  </p>
+                )}
+                {result.report.dob && (
+                  <p className="mt-1 text-xs text-mist">Born: {result.report.dob}</p>
+                )}
+              </div>
+            )}
+
+            {result.report.emails.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Emails</p>
+                <div className="space-y-1.5">
+                  {result.report.emails.map((e) => (
+                    <p key={e} className="mono-num text-sm text-accent break-all">{e}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.report.phones.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Phone numbers on record</p>
+                <div className="space-y-1.5">
+                  {result.report.phones.map((p) => (
+                    <p key={p.number} className="text-sm text-frost">
+                      <span className="mono-num">{p.number}</span>
+                      <span className="text-xs text-mist ml-2">
+                        {[p.type, p.carrier].filter(Boolean).join(" · ")}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.report.addresses.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Addresses</p>
+                <div className="space-y-1">
+                  {result.report.addresses.slice(0, 6).map((a, i) => (
+                    <p key={a} className="text-xs text-frost/85">
+                      {a}
+                      {i === 0 && <span className="text-mist ml-1.5">(most recent)</span>}
+                    </p>
+                  ))}
+                  {result.report.addresses.length > 6 && (
+                    <p className="text-[11px] text-mist">+{result.report.addresses.length - 6} more</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {result.report.relatives.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Relatives</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.report.relatives.slice(0, 8).map((r, i) => (
+                    <span
+                      key={`${r.name}-${i}`}
+                      className="rounded-full border border-line px-3 py-1.5 text-xs text-frost"
+                    >
+                      {r.name}
+                      {r.dob && <span className="text-mist ml-1">b. {r.dob.split("/").pop()}</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="mt-4 text-[10px] text-mist/60 leading-relaxed">
+              Compiled from public records (SearchBug) — aliases and relatives are statistical
+              associations; data can be stale or refer to household members.
+            </p>
+          </div>
+        )}
+
         {result?.person && (
           <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">

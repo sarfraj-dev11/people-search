@@ -8,7 +8,10 @@ import {
   githubUser, githubSearch, redditUser, gravatarProfile, phoneWebMentions,
   type SocialProfile, type GravatarProfile, type WebMentions,
 } from "./social";
-import { ipqsLookup, pdlEnrich, trestleLookup, type PdlPerson } from "./phoneintel";
+import {
+  ipqsLookup, pdlEnrich, trestleLookup, searchbugReport,
+  type PdlPerson, type SearchBugReport,
+} from "./phoneintel";
 
 // ---------- shared types ----------
 
@@ -256,6 +259,8 @@ export interface PhoneResult {
   timezone: string | null;
   /** matched person profile from PeopleDataLabs (aggregated public-record data) */
   person: PdlPerson | null;
+  /** public-records report from SearchBug (names, DOB, addresses, relatives, emails) */
+  report: SearchBugReport | null;
   source: string;
   sourceLabel: string;
   fetchedAt: string;
@@ -297,11 +302,12 @@ function normalizeCnamName(raw: string): string {
 export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const digits = digitsOnly(input).replace(/^1(?=\d{10}$)/, "");
   if (digits.length !== 10) return null;
-  const [hit, ipqs, pdl, trestle, web] = await Promise.all([
+  const [hit, ipqs, pdl, trestle, sb, web] = await Promise.all([
     lookupPhoneReal(digits),
     ipqsLookup(digits).catch(() => null),
     pdlEnrich(digits).catch(() => null),
     trestleLookup(digits).catch(() => null),
+    searchbugReport(digits).catch(() => null),
     phoneWebMentions(digits).catch(() => null),
   ]);
   if (!hit) return null;
@@ -317,7 +323,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const valid = ipqs?.valid ?? trestle?.valid ?? hit.valid;
   const confidence: PhoneResult["confidence"] = !valid
     ? "low"
-    : cnam || ipqs?.active === true || pdl || (trestle?.activityScore ?? 0) >= 70
+    : cnam || ipqs?.active === true || pdl || sb || (trestle?.activityScore ?? 0) >= 70
       ? "high"
       : "medium";
 
@@ -327,6 +333,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   if (ipqs) sources.push("ipqualityscore");
   if (trestle) sources.push("trestle");
   if (pdl) sources.push("peopledatalabs");
+  if (sb) sources.push("searchbug");
 
   // derive live line status: IPQS field wins, else Trestle activity score
   const activeStatus =
@@ -377,6 +384,7 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
     zip: ipqs?.zip ?? null,
     timezone: ipqs?.timezone ?? null,
     person: pdl,
+    report: sb,
     source: "multi",
     sourceLabel: sources.join(" + "),
     fetchedAt: hit.fetchedAt,

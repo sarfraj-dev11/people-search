@@ -214,6 +214,122 @@ export async function pdlEnrich(digits: string): Promise<PdlPerson | null> {
 }
 
 /**
+ * SearchBug People Search API (api_ppl) - real public-records data.
+ * Phone -> names/aliases, DOB, addresses, all phones, emails, relatives.
+ * Pay-per-hit, no charge on miss. Needs SEARCHBUG_KEY + SEARCHBUG_CO_CODE.
+ */
+export interface SearchBugReport {
+  names: string[];
+  dob: string | null;
+  emails: string[];
+  phones: { number: string; type: string | null; carrier: string | null }[];
+  addresses: string[];
+  relatives: { name: string; dob: string | null }[];
+}
+
+const xmlTag = (xml: string, t: string) =>
+  xml.match(new RegExp(`<${t}>([^<]*)</${t}>`))?.[1]?.trim() || null;
+const xmlBlocks = (xml: string, t: string) =>
+  [...xml.matchAll(new RegExp(`<${t}>([\\s\\S]*?)</${t}>`, "g"))].map((m) => m[1]);
+
+function pdlCap(s: string): string {
+  return capWords(s);
+}
+
+export async function searchbugReport(digits: string): Promise<SearchBugReport | null> {
+  const key = process.env.SEARCHBUG_KEY;
+  const co = process.env.SEARCHBUG_CO_CODE;
+  if (!key || !co || !/^\d{10}$/.test(digits)) return null;
+  try {
+    const res = await fetch("https://data.searchbug.com/api/search.aspx", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: `CO_CODE=${co}&TYPE=api_ppl&F=1${digits}`,
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    if (/<Error>/.test(xml)) return null;
+
+    const response = xmlTag(xml, "response") ?? xml;
+
+    // relatives nest their own names/addresses/phones - extract them out first
+    const relativesXml = xmlTag(response, "relatives") ?? "";
+    let body = response.replace(/<relatives>[\s\S]*?<\/relatives>/, "");
+    const relatives = xmlBlocks(relativesXml, "relative").map((r) => {
+      const n = xmlBlocks(r, "name")[0] ?? "";
+      const name = [xmlTag(n, "firstName"), xmlTag(n, "middleName"), xmlTag(n, "lastName")]
+        .filter(Boolean)
+        .join(" ");
+      const dob = xmlBlocks(r, "DOB")[0] ?? "";
+      const d = [xmlTag(dob, "month"), xmlTag(dob, "day"), xmlTag(dob, "year")]
+        .filter((x) => x && x !== "00")
+        .join("/");
+      return { name: name ? pdlCap(name) : "Unknown", dob: d || null };
+    });
+
+    // then addresses (they contain nested <phones/> blocks)
+    const addressesXml = xmlTag(body, "addresses") ?? "";
+    body = body.replace(/<addresses>[\s\S]*?<\/addresses>/, "");
+    const addresses = xmlBlocks(addressesXml, "address").map((a) => {
+      const street = [
+        xmlTag(a, "houseNumber"),
+        xmlTag(a, "preDirectional"),
+        xmlTag(a, "streetName"),
+        xmlTag(a, "streetSuffix"),
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const line = [street, xmlTag(a, "city"), xmlTag(a, "state")]
+        .filter(Boolean)
+        .join(", ")
+        .replace(/, ([A-Z]{2})$/, " $1");
+      const zip = xmlTag(a, "zip");
+      return pdlCap(line) + (zip ? ` ${zip}` : "");
+    });
+
+    const names = xmlBlocks(body, "name")
+      .map((n) =>
+        [xmlTag(n, "firstName"), xmlTag(n, "middleName"), xmlTag(n, "lastName")]
+          .filter(Boolean)
+          .join(" ")
+      )
+      .filter(Boolean)
+      .map(pdlCap)
+      .filter((n, i, a) => a.indexOf(n) === i);
+
+    const dobXml = xmlBlocks(body, "DOB")[0] ?? "";
+    const dob = [xmlTag(dobXml, "month"), xmlTag(dobXml, "day"), xmlTag(dobXml, "year")]
+      .filter((x) => x && x !== "00")
+      .join("/") || null;
+
+    const phones = xmlBlocks(body, "phone")
+      .map((p) => ({
+        number: xmlTag(p, "phoneNumber") ?? "",
+        type: xmlTag(p, "phoneType"),
+        carrier: xmlTag(p, "carrier"),
+      }))
+      .filter((p) => /^\d{10}$/.test(p.number))
+      .map((p) => ({
+        ...p,
+        number: `(${p.number.slice(0, 3)}) ${p.number.slice(3, 6)}-${p.number.slice(6)}`,
+        carrier: p.carrier ? pdlCap(p.carrier) : null,
+      }));
+
+    const emailsXml = xmlTag(body, "emails") ?? "";
+    const emails = xmlBlocks(emailsXml, "email").slice(0, 8);
+
+    if (!names.length && !addresses.length && !phones.length) return null;
+    return { names, dob, emails, phones, addresses, relatives };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Numverify validation - free tier, email-only signup.
  * Extra validation/carrier/location source alongside CNAM.
  */
