@@ -144,7 +144,7 @@ export default async function PhonePage({
           </div>
         )}
 
-        {result?.web && (result.web.emails.length > 0 || result.web.links.length > 0 || result.web.pages.length > 0) && (
+        {result?.web && (result.web.emails.length > 0 || result.web.phones.length > 0 || result.web.links.length > 0 || result.web.pages.length > 0) && (
           <div className="glass rounded-2xl mt-6 p-5 sm:p-6">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-mist">
               Found on the public web
@@ -156,6 +156,23 @@ export default async function PhonePage({
                 <div className="space-y-1.5">
                   {result.web.emails.slice(0, 5).map((e) => (
                     <p key={e} className="mono-num text-sm text-accent break-all">{e}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.web.phones.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs text-mist mb-2">Other numbers on those pages</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.web.phones.map((p) => (
+                    <a
+                      key={p}
+                      href={`/phone?phone=${encodeURIComponent(p)}`}
+                      className="mono-num rounded-full border border-line px-3 py-1.5 text-xs text-frost hover:border-accent hover:text-accent transition-colors"
+                    >
+                      {p}
+                    </a>
                   ))}
                 </div>
               </div>
@@ -196,7 +213,7 @@ export default async function PhonePage({
                         {p.title || p.url}
                       </span>
                       {p.snippet && (
-                        <span className="block text-[11px] text-mist/70 line-clamp-1 mt-0.5">
+                        <span className="block text-[11px] text-mist/70 line-clamp-3 mt-0.5">
                           {p.snippet}
                         </span>
                       )}

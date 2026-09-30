@@ -113,6 +113,8 @@ export async function githubSearch(query: string): Promise<SocialProfile[]> {
 export interface WebMentions {
   /** emails appearing on public pages that mention this query */
   emails: string[];
+  /** other phone numbers listed on those pages */
+  phones: string[];
   /** social profile links found on those pages */
   links: { platform: string; url: string }[];
   /** pages mentioning the query */
@@ -120,6 +122,7 @@ export interface WebMentions {
 }
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const PHONE_RE = /(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})\b/g;
 const SOCIAL_HOSTS: [RegExp, string][] = [
   [/instagram\.com\/[\w.]+/i, "Instagram"],
   [/twitter\.com\/[\w]+|x\.com\/[\w]+/i, "X (Twitter)"],
@@ -267,8 +270,21 @@ async function searchLite(query: string): Promise<SearchHit[]> {
  * `mustContainDigits` (phone lookups) keeps only pages that literally show the number -
  * search engines return fuzzy hits otherwise.
  */
+/** US phone numbers found in text - formatted, excluding the searched number. */
+function phonesIn(text: string, exclude?: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(PHONE_RE)) {
+    const d = `${m[1]}${m[2]}${m[3]}`;
+    const fmt = `(${m[1]}) ${m[2]}-${m[3]}`;
+    if (d === exclude || out.includes(fmt)) continue;
+    out.push(fmt);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 export async function webMentions(query: string, mustContainDigits?: string): Promise<WebMentions> {
-  const out: WebMentions = { emails: [], links: [], pages: [] };
+  const out: WebMentions = { emails: [], phones: [], links: [], pages: [] };
   const hits = (await searchBrave(`"${query}"`))
     .concat(await searchTavily(`"${query}"`))
     .concat(await searchLite(`"${query}"`));
@@ -294,6 +310,7 @@ export async function webMentions(query: string, mustContainDigits?: string): Pr
           if (!out.emails.includes(e)) out.emails.push(e);
           if (out.emails.length >= 6) break;
         }
+        out.phones.push(...phonesIn(page, mustContainDigits));
       }
       return h;
     })
@@ -306,8 +323,26 @@ export async function webMentions(query: string, mustContainDigits?: string): Pr
       if (re.test(h.url)) out.links.push({ platform, url: h.url.split("?")[0] });
     }
     out.emails.push(...emailsIn(h.snippet));
+    if (mustContainDigits) out.phones.push(...phonesIn(h.snippet, mustContainDigits));
   }
   out.emails = [...new Set(out.emails)];
+  out.phones = [...new Set(out.phones)].slice(0, 10);
+
+  // pull emails + other numbers out of the verified pages themselves
+  const pageHtml = await Promise.all(out.pages.slice(0, 4).map((p) => getText(p.url)));
+  for (const h of pageHtml) {
+    if (!h) continue;
+    for (const e of emailsIn(h)) {
+      if (!out.emails.includes(e)) out.emails.push(e);
+      if (out.emails.length >= 6) break;
+    }
+    if (mustContainDigits) {
+      for (const p of phonesIn(h, mustContainDigits)) {
+        if (!out.phones.includes(p)) out.phones.push(p);
+        if (out.phones.length >= 10) break;
+      }
+    }
+  }
 
   // de-dupe links
   const seenLinks = new Set<string>();
@@ -349,16 +384,18 @@ async function directoryMentions(digits: string): Promise<SearchHit[]> {
 /** Phone-specific web search - queries common written formats of the number. */
 export async function phoneWebMentions(digits: string): Promise<WebMentions> {
   const fmt = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-  const merged: WebMentions = { emails: [], links: [], pages: [] };
+  const merged: WebMentions = { emails: [], phones: [], links: [], pages: [] };
   merged.pages.push(...(await directoryMentions(digits)));
   for (const q of [digits, fmt]) {
     const r = await webMentions(q, digits);
     merged.emails.push(...r.emails);
+    merged.phones.push(...r.phones);
     merged.links.push(...r.links);
     merged.pages.push(...r.pages);
     if (merged.pages.length >= 8) break;
   }
   merged.emails = [...new Set(merged.emails)];
+  merged.phones = [...new Set(merged.phones)];
   merged.pages = merged.pages.filter((p, i, a) => a.findIndex((x) => x.url === p.url) === i).slice(0, 10);
   merged.links = merged.links.filter((l, i, a) => a.findIndex((x) => x.url === l.url) === i);
   return merged;
