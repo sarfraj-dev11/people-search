@@ -275,10 +275,42 @@ export async function webMentions(query: string): Promise<WebMentions> {
   return out;
 }
 
+/**
+ * Public caller-ID directories that serve a page per reported number.
+ * 404 = the number simply isn't listed there - a clean negative signal.
+ */
+const PHONE_DIRECTORIES: { name: string; url: (d: string) => string }[] = [
+  { name: "800notes", url: (d) => `https://800notes.com/Phone.aspx/1-${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` },
+  { name: "WhoCallsMe", url: (d) => `https://whocallsme.com/Phone-Number.aspx/${d}` },
+];
+
+async function directoryMentions(digits: string): Promise<SearchHit[]> {
+  const hits = await Promise.all(
+    PHONE_DIRECTORIES.map(async ({ name, url }) => {
+      const u = url(digits);
+      const html = await getText(u);
+      if (!html) return null;
+      const title = decodeEntities(
+        (html.match(/<title[^>]*>([^<]+)/i)?.[1] ?? `${name} reports`).trim()
+      );
+      const desc = decodeEntities(
+        (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1] ?? "").trim()
+      );
+      return {
+        title,
+        url: u,
+        snippet: desc || `Community-reported calls and comments about this number on ${name}.`,
+      };
+    })
+  );
+  return hits.filter((h): h is SearchHit => h !== null);
+}
+
 /** Phone-specific web search - queries common written formats of the number. */
 export async function phoneWebMentions(digits: string): Promise<WebMentions> {
   const fmt = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
   const merged: WebMentions = { emails: [], links: [], pages: [] };
+  merged.pages.push(...(await directoryMentions(digits)));
   for (const q of [digits, fmt]) {
     const r = await webMentions(q);
     merged.emails.push(...r.emails);
