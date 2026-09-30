@@ -8,7 +8,7 @@ import {
   githubUser, githubSearch, redditUser, gravatarProfile, phoneWebMentions,
   type SocialProfile, type GravatarProfile, type WebMentions,
 } from "./social";
-import { ipqsLookup, pdlEnrich, type PdlPerson } from "./phoneintel";
+import { ipqsLookup, pdlEnrich, trestleLookup, type PdlPerson } from "./phoneintel";
 
 // ---------- shared types ----------
 
@@ -236,6 +236,8 @@ export interface PhoneResult {
   fraudScore: number | null;
   /** live carrier signal: Active Line / Disconnected Line / Phone Turned Off / ... */
   activeStatus: string | null;
+  /** Trestle 0-100 observed network activity */
+  activityScore: number | null;
   /** reputation/line flags from IPQS */
   flags: {
     voip: boolean;
@@ -295,10 +297,11 @@ function normalizeCnamName(raw: string): string {
 export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const digits = digitsOnly(input).replace(/^1(?=\d{10}$)/, "");
   if (digits.length !== 10) return null;
-  const [hit, ipqs, pdl, web] = await Promise.all([
+  const [hit, ipqs, pdl, trestle, web] = await Promise.all([
     lookupPhoneReal(digits),
     ipqsLookup(digits).catch(() => null),
     pdlEnrich(digits).catch(() => null),
+    trestleLookup(digits).catch(() => null),
     phoneWebMentions(digits).catch(() => null),
   ]);
   if (!hit) return null;
@@ -311,10 +314,10 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
       ? normalizeCnamName(rawCnam)
       : (ipqs?.name ?? null);
 
-  const valid = ipqs?.valid ?? hit.valid;
+  const valid = ipqs?.valid ?? trestle?.valid ?? hit.valid;
   const confidence: PhoneResult["confidence"] = !valid
     ? "low"
-    : cnam || ipqs?.active === true || pdl
+    : cnam || ipqs?.active === true || pdl || (trestle?.activityScore ?? 0) >= 70
       ? "high"
       : "medium";
 
@@ -322,14 +325,41 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
 
   const sources = ["freecnamlookingup", "numbers.online"];
   if (ipqs) sources.push("ipqualityscore");
+  if (trestle) sources.push("trestle");
   if (pdl) sources.push("peopledatalabs");
+
+  // derive live line status: IPQS field wins, else Trestle activity score
+  const activeStatus =
+    ipqs?.activeStatus ??
+    (trestle?.activityScore != null
+      ? trestle.activityScore >= 70
+        ? "Active Line - High Confidence"
+        : trestle.activityScore >= 30
+          ? "Active Line - Low Confidence"
+          : "Low Activity / Possibly Inactive"
+      : null);
+
+  const flags =
+    ipqs?.flags ??
+    (trestle
+      ? {
+          voip: /voip/i.test(trestle.lineType ?? ""),
+          disposable: false,
+          prepaid: trestle.prepaid,
+          tollFree: false,
+          doNotCall: false,
+          leaked: false,
+          spammer: false,
+          recentAbuse: false,
+        }
+      : null);
 
   return {
     phone: `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`,
     digits,
     valid,
-    lineType: hit.lineType ?? ipqs?.lineType ?? null,
-    carrier: hit.carrier ?? ipqs?.carrier ?? null,
+    lineType: hit.lineType ?? ipqs?.lineType ?? trestle?.lineType ?? null,
+    carrier: hit.carrier ?? ipqs?.carrier ?? trestle?.carrier ?? null,
     network: raw.portability?.spid_carrier_name ?? null,
     cnam,
     genericName: generic,
@@ -339,8 +369,9 @@ export async function lookupPhone(input: string): Promise<PhoneResult | null> {
     spamScore: hit.spamScore,
     riskLevel: hit.riskLevel,
     fraudScore: ipqs?.fraudScore ?? null,
-    activeStatus: ipqs?.activeStatus ?? null,
-    flags: ipqs?.flags ?? null,
+    activityScore: trestle?.activityScore ?? null,
+    activeStatus,
+    flags,
     extraNames: ipqs?.name ? [ipqs.name] : [],
     extraEmails: ipqs?.emails ?? [],
     zip: ipqs?.zip ?? null,

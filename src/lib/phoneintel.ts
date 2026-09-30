@@ -59,6 +59,51 @@ interface IpqsRaw {
 const T = 8_000;
 
 /**
+ * Trestle Phone Validation / phone_intel - carrier-signal data.
+ * Trial enables 3.0/phone_intel: validity, carrier, line type, prepaid,
+ * and activity_score (0-100 = observed live usage on the network).
+ * Reverse Phone API (owners/addresses) needs product access enabled.
+ */
+export interface TrestlePhone {
+  valid: boolean | null;
+  /** 0-100 - observed recent activity on the carrier network */
+  activityScore: number | null;
+  carrier: string | null;
+  lineType: string | null;
+  prepaid: boolean;
+}
+
+export async function trestleLookup(digits: string): Promise<TrestlePhone | null> {
+  const key = process.env.TRESTLE_API_KEY;
+  if (!key || !/^\d{10}$/.test(digits)) return null;
+  try {
+    const res = await fetch(
+      `https://api.trestleiq.com/3.0/phone_intel?phone=${encodeURIComponent(`1${digits}`)}`,
+      { headers: { "x-api-key": key }, signal: AbortSignal.timeout(T) }
+    );
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      is_valid?: boolean;
+      activity_score?: number;
+      carrier?: string;
+      line_type?: string;
+      is_prepaid?: boolean;
+      error?: unknown;
+    };
+    if (j.error) return null;
+    return {
+      valid: j.is_valid ?? null,
+      activityScore: j.activity_score ?? null,
+      carrier: j.carrier ?? null,
+      lineType: j.line_type ?? null,
+      prepaid: !!j.is_prepaid,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * PeopleDataLabs person enrichment - free tier (100 credits/mo).
  * Phone -> real person profile: name, emails, social URLs, address, job.
  * This is actual aggregated-record data (same category brokers sell).

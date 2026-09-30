@@ -143,6 +143,24 @@ export default async function PhonePage({
                   )
                 }
               />
+              {result.activityScore != null && (
+                <Field
+                  label="Network activity"
+                  value={
+                    <span
+                      className={
+                        result.activityScore >= 70
+                          ? "text-good"
+                          : result.activityScore >= 30
+                            ? "text-warn"
+                            : "text-bad"
+                      }
+                    >
+                      {result.activityScore}/100
+                    </span>
+                  }
+                />
+              )}
               {result.fraudScore != null && (
                 <Field
                   label="Fraud score"
