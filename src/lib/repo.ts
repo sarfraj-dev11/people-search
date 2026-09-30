@@ -8,6 +8,7 @@ import {
   githubUser, githubSearch, redditUser, gravatarProfile, phoneWebMentions,
   type SocialProfile, type GravatarProfile, type WebMentions,
 } from "./social";
+import { ipqsLookup } from "./phoneintel";
 
 // ---------- shared types ----------
 
@@ -231,6 +232,26 @@ export interface PhoneResult {
   state: string | null;
   spamScore: number | null;
   riskLevel: string | null;
+  /** IPQS 0-100 fraud risk */
+  fraudScore: number | null;
+  /** live carrier signal: Active Line / Disconnected Line / Phone Turned Off / ... */
+  activeStatus: string | null;
+  /** reputation/line flags from IPQS */
+  flags: {
+    voip: boolean;
+    disposable: boolean;
+    prepaid: boolean;
+    tollFree: boolean;
+    doNotCall: boolean;
+    leaked: boolean;
+    spammer: boolean;
+    recentAbuse: boolean;
+  } | null;
+  /** names/emails IPQS associates with the number (not identity-verified) */
+  extraNames: string[];
+  extraEmails: string[];
+  zip: string | null;
+  timezone: string | null;
   source: string;
   sourceLabel: string;
   fetchedAt: string;
@@ -272,40 +293,56 @@ function normalizeCnamName(raw: string): string {
 export async function lookupPhone(input: string): Promise<PhoneResult | null> {
   const digits = digitsOnly(input).replace(/^1(?=\d{10}$)/, "");
   if (digits.length !== 10) return null;
-  const [hit, web] = await Promise.all([
+  const [hit, ipqs, web] = await Promise.all([
     lookupPhoneReal(digits),
+    ipqsLookup(digits).catch(() => null),
     phoneWebMentions(digits).catch(() => null),
   ]);
   if (!hit) return null;
 
   const rawCnam = hit.cnam?.trim() ?? "";
   const generic = !!rawCnam && GENERIC_CNAM.test(rawCnam);
-  const cnam = rawCnam && !generic ? normalizeCnamName(rawCnam) : null;
+  // IPQS reverse-name fills in when the carrier record is generic or missing
+  const cnam =
+    rawCnam && !generic
+      ? normalizeCnamName(rawCnam)
+      : (ipqs?.name ?? null);
 
-  const confidence: PhoneResult["confidence"] = !hit.valid
+  const valid = ipqs?.valid ?? hit.valid;
+  const confidence: PhoneResult["confidence"] = !valid
     ? "low"
-    : cnam
+    : cnam || ipqs?.active === true
       ? "high"
       : "medium";
 
   const raw = (hit.detail.raw ?? {}) as { portability?: { spid_carrier_name?: string } };
 
+  const sources = ["freecnamlookingup", "numbers.online"];
+  if (ipqs) sources.push("ipqualityscore");
+
   return {
     phone: `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`,
     digits,
-    valid: hit.valid,
-    lineType: hit.lineType,
-    carrier: hit.carrier,
+    valid,
+    lineType: hit.lineType ?? ipqs?.lineType ?? null,
+    carrier: hit.carrier ?? ipqs?.carrier ?? null,
     network: raw.portability?.spid_carrier_name ?? null,
     cnam,
     genericName: generic,
     confidence,
-    city: hit.city ? capWords(hit.city) : null,
-    state: hit.state ? capWords(hit.state) : null,
+    city: hit.city ? capWords(hit.city) : (ipqs?.city ?? null),
+    state: hit.state ? capWords(hit.state) : (ipqs?.region ?? null),
     spamScore: hit.spamScore,
     riskLevel: hit.riskLevel,
-    source: "cnamlookup",
-    sourceLabel: "freecnamlookingup + numbers.online",
+    fraudScore: ipqs?.fraudScore ?? null,
+    activeStatus: ipqs?.activeStatus ?? null,
+    flags: ipqs?.flags ?? null,
+    extraNames: ipqs?.name ? [ipqs.name] : [],
+    extraEmails: ipqs?.emails ?? [],
+    zip: ipqs?.zip ?? null,
+    timezone: ipqs?.timezone ?? null,
+    source: "multi",
+    sourceLabel: sources.join(" + "),
     fetchedAt: hit.fetchedAt,
     web,
   };

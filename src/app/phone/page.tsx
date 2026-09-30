@@ -110,6 +110,18 @@ export default async function PhonePage({
                 label="Line type"
                 value={LINE_LABELS[result.lineType ?? ""] ?? result.lineType ?? "Unknown"}
               />
+              {result.activeStatus && (
+                <Field
+                  label="Line status"
+                  value={
+                    /active/i.test(result.activeStatus) ? (
+                      <span className="text-good">{result.activeStatus}</span>
+                    ) : (
+                      <span className="text-warn">{result.activeStatus}</span>
+                    )
+                  }
+                />
+              )}
               <Field
                 label="Spam risk"
                 value={
@@ -131,7 +143,75 @@ export default async function PhonePage({
                   )
                 }
               />
+              {result.fraudScore != null && (
+                <Field
+                  label="Fraud score"
+                  value={
+                    <span
+                      className={
+                        result.fraudScore >= 75
+                          ? "text-bad"
+                          : result.fraudScore >= 40
+                            ? "text-warn"
+                            : "text-good"
+                      }
+                    >
+                      {result.fraudScore}/100
+                    </span>
+                  }
+                />
+              )}
+              {result.zip && <Field label="ZIP" value={result.zip} />}
+              {result.timezone && <Field label="Timezone" value={result.timezone} />}
             </dl>
+
+            {result.flags && Object.values(result.flags).some(Boolean) && (
+              <div className="border-t border-line px-5 sm:px-6 py-4">
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ["voip", "VoIP"],
+                    ["disposable", "Disposable / burner"],
+                    ["prepaid", "Prepaid"],
+                    ["tollFree", "Toll-free"],
+                    ["doNotCall", "Do-Not-Call list"],
+                    ["leaked", "Leaked online"],
+                    ["spammer", "Reported spammer"],
+                    ["recentAbuse", "Recent abuse"],
+                  ] as const).map(([k, label]) =>
+                    result.flags![k] ? (
+                      <span
+                        key={k}
+                        className="rounded-full border border-bad/40 bg-bad/10 px-3 py-1 text-[11px] font-medium text-bad"
+                      >
+                        {label}
+                      </span>
+                    ) : null
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(result.extraEmails.length > 0 || result.extraNames.length > 0) && (
+              <div className="border-t border-line px-5 sm:px-6 py-4">
+                {result.extraNames.length > 0 && (
+                  <p className="text-xs text-mist">
+                    Also associated:{" "}
+                    <span className="text-frost">{result.extraNames.join(", ")}</span>
+                  </p>
+                )}
+                {result.extraEmails.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-xs text-mist">Emails linked by carrier/reputation data</p>
+                    {result.extraEmails.map((e) => (
+                      <p key={e} className="mono-num text-sm text-accent break-all">{e}</p>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-[10px] text-mist/60">
+                  Carrier/reputation data — not identity-verified.
+                </p>
+              </div>
+            )}
 
             <div className="border-t border-line px-6 py-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-mist/80">
               <span>Source: {result.sourceLabel}</span>
