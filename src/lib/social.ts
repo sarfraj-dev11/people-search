@@ -285,9 +285,9 @@ function phonesIn(text: string, exclude?: string): string[] {
 
 export async function webMentions(query: string, mustContainDigits?: string): Promise<WebMentions> {
   const out: WebMentions = { emails: [], phones: [], links: [], pages: [] };
-  const hits = (await searchBrave(`"${query}"`))
-    .concat(await searchTavily(`"${query}"`))
-    .concat(await searchLite(`"${query}"`));
+  const hits = (await searchBrave(query))
+    .concat(await searchTavily(query))
+    .concat(await searchLite(query));
 
   const seen = new Set<string>();
   const candidates: SearchHit[] = [];
@@ -384,9 +384,17 @@ async function directoryMentions(digits: string): Promise<SearchHit[]> {
 /** Phone-specific web search - queries common written formats of the number. */
 export async function phoneWebMentions(digits: string): Promise<WebMentions> {
   const fmt = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  const dash = `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
   const merged: WebMentions = { emails: [], phones: [], links: [], pages: [] };
   merged.pages.push(...(await directoryMentions(digits)));
-  for (const q of [digits, fmt]) {
+  // the email-flavored queries surface pages where the number sits next to an email
+  for (const q of [
+    `"${digits}"`,
+    `"${fmt}"`,
+    `"${dash}"`,
+    `"${dash}" email OR gmail OR yahoo`,
+    `"${digits}" "email address"`,
+  ]) {
     const r = await webMentions(q, digits);
     merged.emails.push(...r.emails);
     merged.phones.push(...r.phones);
