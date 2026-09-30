@@ -1,5 +1,5 @@
 import { lookupPhone } from "@/lib/repo";
-import PhoneInput from "@/components/PhoneInput";
+import LookupBar from "@/components/LookupBar";
 
 const LINE_LABELS: Record<string, string> = {
   fixed_line_or_mobile: "Landline or Mobile",
@@ -39,7 +39,7 @@ export default async function PhonePage({
   return (
     <div className="shell py-10 sm:py-14 max-w-2xl">
       <div className="flex justify-center">
-        <PhoneInput initial={phone} />
+        <LookupBar initialMode="phone" initial={phone} />
       </div>
 
       <div className="mt-10">

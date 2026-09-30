@@ -4,6 +4,10 @@ import {
   fetchByName, fetchByAddress, lookupPhoneReal,
   ingestRealPeople, ingestRealProperty, type RealPropertyHit,
 } from "./real";
+import {
+  githubUser, githubSearch, redditUser, gravatarProfile,
+  type SocialProfile, type GravatarProfile,
+} from "./social";
 
 // ---------- shared types ----------
 
@@ -107,7 +111,7 @@ async function searchRealPeople(name: string, where: string): Promise<PersonResu
   const hits = await fetchByName(name, parseWhere(where));
   if (!hits.length) return [];
 
-  // no writable DB (e.g. serverless) — map hits directly instead of caching
+  // no writable DB (e.g. serverless) - map hits directly instead of caching
   if (!getDb()) {
     return hits.map((h, i) => ({
       id: i + 1,
@@ -218,7 +222,7 @@ export interface PhoneResult {
   carrier: string | null;
   /** underlying network when the carrier is an MVNO/reseller */
   network: string | null;
-  /** registered caller name from CNAM, normalized to "First Last" — null means none on record */
+  /** registered caller name from CNAM, normalized to "First Last" - null means none on record */
   cnam: string | null;
   /** true when CNAM is a generic label like "Wireless Caller" rather than a person */
   genericName: boolean;
@@ -313,4 +317,47 @@ export function lastNameDirectory(letter: string): { name: string; count: number
        GROUP BY last_name ORDER BY last_name LIMIT 80`
     )
     .all(`${letter}%`) as { name: string; count: number }[];
+}
+
+// ---------- email / username lookups (free public-profile sources) ----------
+
+export interface EmailResult {
+  email: string;
+  gravatar: GravatarProfile | null;
+  github: SocialProfile[];
+}
+
+export async function lookupEmail(email: string): Promise<EmailResult | null> {
+  const clean = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) return null;
+  const [gravatar, github] = await Promise.all([
+    gravatarProfile(clean),
+    githubSearch(clean),
+  ]);
+  return { email: clean, gravatar, github };
+}
+
+export interface UsernameResult {
+  username: string;
+  profiles: SocialProfile[];
+  /** direct profile links - unverified until visited */
+  links: { platform: string; url: string }[];
+}
+
+export async function lookupUsername(username: string): Promise<UsernameResult | null> {
+  const u = username.trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9._-]{2,30}$/.test(u)) return null;
+  const [gh, rd] = await Promise.all([githubUser(u), redditUser(u)]);
+  return {
+    username: u,
+    profiles: [gh, rd].filter((p): p is SocialProfile => !!p),
+    links: [
+      { platform: "Instagram", url: `https://www.instagram.com/${u}` },
+      { platform: "X (Twitter)", url: `https://x.com/${u}` },
+      { platform: "TikTok", url: `https://www.tiktok.com/@${u}` },
+      { platform: "Facebook", url: `https://www.facebook.com/${u}` },
+      { platform: "LinkedIn", url: `https://www.linkedin.com/in/${u}` },
+      { platform: "YouTube", url: `https://www.youtube.com/@${u}` },
+    ],
+  };
 }

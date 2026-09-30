@@ -1,5 +1,5 @@
 import HeroVisual from "@/components/HeroVisual";
-import PhoneInput from "@/components/PhoneInput";
+import LookupBar from "@/components/LookupBar";
 
 export default function Home() {
   return (
@@ -10,7 +10,7 @@ export default function Home() {
         know who&apos;s calling.
       </h1>
       <div className="mt-9 w-full max-w-lg">
-        <PhoneInput large />
+        <LookupBar large />
       </div>
       <div className="flex-1 w-full">
         <HeroVisual />
