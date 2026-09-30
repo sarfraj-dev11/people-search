@@ -65,14 +65,49 @@ const T = 8_000;
  */
 export interface PdlPerson {
   name: string | null;
+  sex: string | null;
+  birthYear: number | null;
   emails: string[];
   phones: string[];
   address: string | null;
   location: string | null;
   jobTitle: string | null;
   company: string | null;
+  industry: string | null;
   profiles: { platform: string; url: string }[];
 }
+
+interface PdlData {
+  full_name?: string;
+  sex?: string;
+  birth_year?: number | boolean;
+  // paid field bundles return `true`/`false` when not licensed - only arrays/strings are real data
+  emails?: { address?: string }[] | boolean;
+  personal_emails?: string[] | boolean;
+  recommended_personal_email?: string | boolean;
+  phone_numbers?: string[] | boolean;
+  mobile_phone?: string | boolean;
+  street_addresses?:
+    | { street_address?: string; locality?: string; region?: string; postal_code?: string }[]
+    | boolean;
+  location_names?: string[] | boolean;
+  location_region?: string | boolean;
+  job_title?: string;
+  job_company_name?: string;
+  industry?: string;
+  linkedin_url?: string;
+  twitter_url?: string;
+  facebook_url?: string;
+  github_url?: string;
+  profiles?: { network?: string; url?: string; username?: string }[] | boolean;
+}
+
+const ACRONYMS = new Set(["nyc", "usa", "us", "la", "dc", "ny", "sf", "hr", "it", "md"]);
+const capWords = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/(^|[-' ])\w/g, (c) => c.toUpperCase())
+    .replace(/\b\w{2,}\b/g, (w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w));
 
 export async function pdlEnrich(digits: string): Promise<PdlPerson | null> {
   const key = process.env.PDL_API_KEY;
@@ -86,44 +121,47 @@ export async function pdlEnrich(digits: string): Promise<PdlPerson | null> {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
-    const j = (await res.json()) as {
-      status?: number;
-      data?: {
-        full_name?: string;
-        emails?: { address?: string }[];
-        phone_numbers?: string[];
-        street_addresses?: { street_address?: string; locality?: string; region?: string; postal_code?: string }[];
-        location_names?: string[];
-        job_title?: string;
-        job_company_name?: string;
-        linkedin_url?: string;
-        twitter_url?: string;
-        facebook_url?: string;
-        github_url?: string;
-      };
-    };
+    const j = (await res.json()) as { status?: number; data?: PdlData };
     const d = j.data;
     if (j.status !== 200 || !d) return null;
 
-    const addr = d.street_addresses?.[0];
-    const profiles = [
-      d.linkedin_url && { platform: "LinkedIn", url: d.linkedin_url },
-      d.twitter_url && { platform: "X (Twitter)", url: d.twitter_url },
-      d.facebook_url && { platform: "Facebook", url: d.facebook_url },
-      d.github_url && { platform: "GitHub", url: d.github_url },
-    ].filter((p): p is { platform: string; url: string } => !!p);
+    const arr = <T>(v: T[] | boolean | undefined): T[] => (Array.isArray(v) ? v : []);
+    const str = (v: string | boolean | undefined): string | null =>
+      typeof v === "string" && v ? v : null;
+
+    const emails = [
+      ...arr(d.emails).map((e) => e.address),
+      ...arr(d.personal_emails),
+      str(d.recommended_personal_email),
+    ].filter((e): e is string => !!e).slice(0, 6);
+
+    const addr = arr(d.street_addresses)[0];
+    const profiles = arr(d.profiles)
+      .filter((p) => p.url)
+      .map((p) => ({
+        platform: capWords(p.network ?? "profile"),
+        url: p.url!.startsWith("http") ? p.url! : `https://${p.url}`,
+      }))
+      .filter((p, i, a) => a.findIndex((x) => x.url === p.url) === i)
+      .slice(0, 8);
+
+    const isSocial = (u: string) => !u.includes("/company/");
+    const clean = profiles.filter((p) => isSocial(p.url));
 
     return {
-      name: d.full_name ?? null,
-      emails: (d.emails ?? []).map((e) => e.address).filter((e): e is string => !!e).slice(0, 6),
-      phones: (d.phone_numbers ?? []).slice(0, 6),
+      name: d.full_name ? capWords(d.full_name) : null,
+      sex: d.sex ?? null,
+      birthYear: typeof d.birth_year === "number" ? d.birth_year : null,
+      emails,
+      phones: arr(d.phone_numbers).concat(str(d.mobile_phone) ? [str(d.mobile_phone)!] : []).slice(0, 6),
       address: addr
         ? [addr.street_address, addr.locality, addr.region, addr.postal_code].filter(Boolean).join(", ")
         : null,
-      location: d.location_names?.[0] ?? null,
-      jobTitle: d.job_title ?? null,
-      company: d.job_company_name ?? null,
-      profiles,
+      location: arr(d.location_names)[0] ?? str(d.location_region),
+      jobTitle: d.job_title ? capWords(d.job_title) : null,
+      company: d.job_company_name ? capWords(d.job_company_name) : null,
+      industry: d.industry ? capWords(d.industry) : null,
+      profiles: clean,
     };
   } catch {
     return null;

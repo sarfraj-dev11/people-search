@@ -232,13 +232,22 @@ export default async function PhonePage({
             {result.person.name && (
               <p className="mt-3 text-xl font-semibold text-frost">{result.person.name}</p>
             )}
-            {(result.person.jobTitle || result.person.company) && (
+            {(result.person.sex || result.person.birthYear) && (
               <p className="mt-1 text-xs text-mist">
-                {[result.person.jobTitle, result.person.company].filter(Boolean).join(" · ")}
+                {[result.person.sex, result.person.birthYear ? `b. ${result.person.birthYear}` : null]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             )}
-            {result.person.address && (
-              <p className="mt-1 text-xs text-mist">{result.person.address}</p>
+            {(result.person.jobTitle || result.person.company) && (
+              <p className="mt-1 text-xs text-mist">
+                {[result.person.jobTitle, result.person.company, result.person.industry]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
+            {(result.person.address || result.person.location) && (
+              <p className="mt-1 text-xs text-mist">{result.person.address ?? result.person.location}</p>
             )}
             {result.person.emails.length > 0 && (
               <div className="mt-4">
