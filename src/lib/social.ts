@@ -197,6 +197,29 @@ async function searchBrave(query: string): Promise<SearchHit[]> {
   }
 }
 
+/** Tavily search API - reliable JSON results when TAVILY_API_KEY is set (free tier). */
+async function searchTavily(query: string): Promise<SearchHit[]> {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) return [];
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ query, max_results: 10 }),
+      signal: AbortSignal.timeout(T),
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as {
+      results?: { url?: string; title?: string; content?: string }[];
+    };
+    return (j.results ?? [])
+      .filter((r) => r.url && /^https?:/.test(r.url))
+      .map((r) => ({ title: r.title ?? "", url: r.url!, snippet: r.content ?? "" }));
+  } catch {
+    return [];
+  }
+}
+
 /** DuckDuckGo lite (POST - GET is captcha-walled). Best-effort, keyless. */
 async function searchLite(query: string): Promise<SearchHit[]> {
   let html: string | null = null;
@@ -239,15 +262,45 @@ async function searchLite(query: string): Promise<SearchHit[]> {
   return hits;
 }
 
-/** Search the public web for pages mentioning a query; extract emails + profile links. */
-export async function webMentions(query: string): Promise<WebMentions> {
+/**
+ * Search the public web for pages mentioning a query; extract emails + profile links.
+ * `mustContainDigits` (phone lookups) keeps only pages that literally show the number -
+ * search engines return fuzzy hits otherwise.
+ */
+export async function webMentions(query: string, mustContainDigits?: string): Promise<WebMentions> {
   const out: WebMentions = { emails: [], links: [], pages: [] };
-  const hits = (await searchBrave(`"${query}"`)).concat(await searchLite(`"${query}"`));
+  const hits = (await searchBrave(`"${query}"`))
+    .concat(await searchTavily(`"${query}"`))
+    .concat(await searchLite(`"${query}"`));
 
   const seen = new Set<string>();
+  const candidates: SearchHit[] = [];
   for (const h of hits) {
-    if (seen.has(h.url) || out.pages.length >= 10) continue;
+    if (seen.has(h.url) || candidates.length >= 10) continue;
     seen.add(h.url);
+    candidates.push(h);
+  }
+
+  const digitsOnlyLocal = (s: string) => s.replace(/\D/g, "");
+  // Fast-pass: digits already visible in title/snippet. Otherwise fetch the page and verify.
+  const verified = await Promise.all(
+    candidates.map(async (h) => {
+      const textDigits = digitsOnlyLocal(`${h.title} ${h.snippet}`);
+      if (mustContainDigits && !textDigits.includes(mustContainDigits)) {
+        const page = await getText(h.url);
+        if (!page) return null;
+        if (!digitsOnlyLocal(page).includes(mustContainDigits)) return null;
+        for (const e of emailsIn(page)) {
+          if (!out.emails.includes(e)) out.emails.push(e);
+          if (out.emails.length >= 6) break;
+        }
+      }
+      return h;
+    })
+  );
+
+  for (const h of verified) {
+    if (!h || out.pages.length >= 10) continue;
     out.pages.push(h);
     for (const [re, platform] of SOCIAL_HOSTS) {
       if (re.test(h.url)) out.links.push({ platform, url: h.url.split("?")[0] });
@@ -255,19 +308,6 @@ export async function webMentions(query: string): Promise<WebMentions> {
     out.emails.push(...emailsIn(h.snippet));
   }
   out.emails = [...new Set(out.emails)];
-
-  // also scan the first few result pages themselves for a visible email
-  if (out.emails.length === 0 && out.pages.length > 0) {
-    const pageHtml = await Promise.all(out.pages.slice(0, 3).map((p) => getText(p.url)));
-    for (const h of pageHtml) {
-      if (!h) continue;
-      for (const e of emailsIn(h)) {
-        if (!out.emails.includes(e)) out.emails.push(e);
-        if (out.emails.length >= 6) break;
-      }
-      if (out.emails.length >= 6) break;
-    }
-  }
 
   // de-dupe links
   const seenLinks = new Set<string>();
@@ -312,7 +352,7 @@ export async function phoneWebMentions(digits: string): Promise<WebMentions> {
   const merged: WebMentions = { emails: [], links: [], pages: [] };
   merged.pages.push(...(await directoryMentions(digits)));
   for (const q of [digits, fmt]) {
-    const r = await webMentions(q);
+    const r = await webMentions(q, digits);
     merged.emails.push(...r.emails);
     merged.links.push(...r.links);
     merged.pages.push(...r.pages);
